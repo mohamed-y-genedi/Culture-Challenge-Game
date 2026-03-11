@@ -33,8 +33,15 @@ class GameProvider extends ChangeNotifier {
   List<Question> get questions => _questions;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
-
   bool get isPlayer1 => _room?.player1 == _nickname;
+  bool get isHost => _room?.hostNickname == _nickname;
+  bool get allPlayersAnswered {
+    if (_room == null || _room!.players.isEmpty) return false;
+    return _room!.players.values.every(
+      (p) => (p as Map<String, dynamic>)['has_answered'] == true,
+    );
+  }
+
   bool get isSinglePlayer => _isSinglePlayer;
   List<Question> get currentQuestions => _currentQuestions;
   int get currentQuestionIndex => _currentQuestionIndex;
@@ -72,8 +79,11 @@ class GameProvider extends ChangeNotifier {
     }
   }
 
-  // Create Room
-  Future<bool> createRoom(String category) async {
+  Future<bool> createRoom(
+    String category, {
+    int maxPlayers = 2,
+    String gameMode = 'ffa',
+  }) async {
     if (_nickname == null || _nickname!.isEmpty) {
       _errorMessage = 'Nickname is required';
       notifyListeners();
@@ -85,7 +95,12 @@ class GameProvider extends ChangeNotifier {
     _setLoading(true);
 
     try {
-      final code = await _service.createRoom(_nickname!, category);
+      final code = await _service.createRoom(
+        _nickname!,
+        category,
+        maxPlayers: maxPlayers,
+        gameMode: gameMode,
+      );
       if (code == null) {
         _errorMessage = 'Failed to create room. Please try again.';
         _setLoading(false);
@@ -93,6 +108,12 @@ class GameProvider extends ChangeNotifier {
       }
 
       _roomCode = code;
+
+      // SINGLE SOURCE OF TRUTH: Reset questions before fetching
+      // The Host fetches once and saves them, then Everyone (Host & Guests)
+      // will receive the EXACT same pool via streamRoom.
+      _questions = [];
+
       _subscribeToRoom();
 
       // Pre-fetch questions locally so they are ready
@@ -129,6 +150,12 @@ class GameProvider extends ChangeNotifier {
       }
 
       _roomCode = code;
+
+      // Guests don't fetch questions from DB.
+      // They reset their state and rely on streamRoom to give them
+      // the Host's uploaded questions.
+      _questions = [];
+
       _subscribeToRoom();
       _setLoading(false);
       return true;
@@ -159,12 +186,18 @@ class GameProvider extends ChangeNotifier {
             if (updatedRoom.status == 'finished' &&
                 _room?.status != 'finished') {
               // The game just finished. Update leaderboard for exactly this client.
-              final myScore = isPlayer1
-                  ? updatedRoom.p1Score
-                  : updatedRoom.p2Score;
-              final myName =
-                  _nickname ??
-                  (isPlayer1 ? updatedRoom.player1 : updatedRoom.player2);
+              // The game just finished. Update leaderboard for exactly this client.
+              int myScore = 0;
+              if (updatedRoom.players.isNotEmpty &&
+                  _nickname != null &&
+                  updatedRoom.players.containsKey(_nickname)) {
+                myScore =
+                    (updatedRoom.players[_nickname!]
+                        as Map<String, dynamic>)['score'] ??
+                    0;
+              }
+              final myName = _nickname;
+
               if (myName != null) {
                 _service.updateLeaderboard(myName, myScore);
               }
@@ -174,7 +207,15 @@ class GameProvider extends ChangeNotifier {
 
             // If we joined and don't have questions yet, fetch them
             if (_questions.isEmpty && updatedRoom.category.isNotEmpty) {
-              _fetchQuestions(updatedRoom.category);
+              if (updatedRoom.questions != null &&
+                  updatedRoom.questions!.isNotEmpty) {
+                _questions = updatedRoom.questions!
+                    .map((q) => Question.fromJson(q))
+                    .toList();
+                debugPrint(
+                  'DEBUG: Loaded ${_questions.length} questions from room shared pool.',
+                );
+              }
             }
 
             notifyListeners();
@@ -280,6 +321,12 @@ class GameProvider extends ChangeNotifier {
         newIdsToSave, // Will append to existing in helper
       );
 
+      if (_roomCode != null && isHost) {
+        final qsJson = result.map((q) => q.toJson()).toList();
+        await _service.saveRoomQuestions(_roomCode!, qsJson);
+        debugPrint('DEBUG: Saved questions to room shared pool.');
+      }
+
       debugPrint(
         'DEBUG: Saved new IDs to memory. Total saved: ${seenIds.length + newIdsToSave.length}',
       );
@@ -291,7 +338,7 @@ class GameProvider extends ChangeNotifier {
   }
 
   Future<void> submitAnswer(int currentScore, bool isCorrect) async {
-    if (_room == null) return;
+    if (_room == null || _nickname == null) return;
 
     // Play sound based on answer mapping
     _playSound(isCorrect);
@@ -299,14 +346,20 @@ class GameProvider extends ChangeNotifier {
     int newScore = currentScore;
 
     // Optimistic UI update
-    if (isPlayer1) {
-      _room = _room!.copyWith(p1Score: newScore);
-    } else {
-      _room = _room!.copyWith(p2Score: newScore);
+    final updatedPlayers = Map<String, dynamic>.from(_room!.players);
+    if (updatedPlayers.containsKey(_nickname!)) {
+      Map<String, dynamic> playerStats = Map<String, dynamic>.from(
+        updatedPlayers[_nickname!],
+      );
+      playerStats['score'] = newScore;
+      playerStats['has_answered'] = true;
+      updatedPlayers[_nickname!] = playerStats;
     }
+
+    _room = _room!.copyWith(players: updatedPlayers);
     notifyListeners();
 
-    await _service.updateScore(_roomCode!, isPlayer1 ? 1 : 2, newScore);
+    await _service.updateScore(_roomCode!, _nickname!, newScore);
   }
 
   Future<void> nextQuestion() async {
@@ -321,12 +374,18 @@ class GameProvider extends ChangeNotifier {
 
   // Start the game (only host should call this). Returns true on success.
   Future<bool> startGame() async {
-    if (_roomCode == null) return false;
+    if (_roomCode == null || _room == null) return false;
 
     _errorMessage = null;
     _setLoading(true);
 
     try {
+      if (_questions.isEmpty) {
+        _errorMessage = 'Questions not loaded yet';
+        _setLoading(false);
+        return false;
+      }
+
       final success = await _service.startGame(_roomCode!);
       if (!success) {
         _errorMessage = 'Failed to start game';

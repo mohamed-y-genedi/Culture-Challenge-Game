@@ -115,22 +115,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
                               ),
                             ),
                             const SizedBox(height: 8),
-                            Expanded(
-                              child: ListView(
-                                children: [
-                                  if (provider.room?.player1 != null)
-                                    _PlayerChip(
-                                      name: provider.room!.player1!,
-                                      label: 'Player 1'.tr(),
-                                    ),
-                                  if (provider.room?.player2 != null)
-                                    _PlayerChip(
-                                      name: provider.room!.player2!,
-                                      label: 'Player 2'.tr(),
-                                    ),
-                                ],
+                            if (provider.room != null)
+                              Expanded(
+                                child: provider.room!.gameMode == 'teams'
+                                    ? _buildTeamsView(provider, context)
+                                    : _buildFFAView(provider, context),
                               ),
-                            ),
                           ],
                         ),
                       ),
@@ -143,13 +133,57 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24.0),
                     child: Center(
-                      child: Text(
-                        'Waiting for players to join...'.tr(),
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+                      child: provider.isHost
+                          ? Semantics(
+                              label: 'START_GAME_BTN',
+                              button: true,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 48,
+                                    vertical: 16,
+                                  ),
+                                  backgroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.secondary,
+                                ),
+                                onPressed:
+                                    (provider.room != null &&
+                                        provider.room!.players.length ==
+                                            provider.room!.maxPlayers)
+                                    ? () async {
+                                        final success = await provider
+                                            .startGame();
+                                        if (!success && context.mounted) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                provider.errorMessage ??
+                                                    'Failed to start game'.tr(),
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                      }
+                                    : null,
+                                child: Text(
+                                  'START GAME',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : Text(
+                              'Waiting for players to join...'.tr(),
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                     ),
                   ),
                 ],
@@ -160,26 +194,208 @@ class _LobbyScreenState extends State<LobbyScreen> {
       },
     );
   }
+
+  Widget _buildFFAView(GameProvider provider, BuildContext context) {
+    return ListView.builder(
+      itemCount: provider.room!.maxPlayers,
+      itemBuilder: (context, index) {
+        final playersList = provider.room!.players.keys.toList();
+        if (index < playersList.length) {
+          // Occupied slot
+          final playerName = playersList[index];
+          final isMe = playerName == provider.nickname;
+          return _PlayerChip(
+            name: playerName,
+            label: isMe ? 'You'.tr() : 'Player ${index + 1}'.tr(),
+            isMe: isMe,
+            isHost: playerName == provider.room!.hostNickname,
+          );
+        } else {
+          // Empty slot
+          return _PlayerChip(
+            name: 'Empty Slot'.tr(),
+            label: 'Waiting for player...'.tr(),
+            isEmpty: true,
+          );
+        }
+      },
+    );
+  }
+
+  Widget _buildTeamsView(GameProvider provider, BuildContext context) {
+    final Map<String, dynamic> playersData = provider.room!.players;
+
+    // Group occupying players by team
+    final team1Players = <String>[];
+    final team2Players = <String>[];
+
+    playersData.forEach((name, data) {
+      if (data['team'] == 1) {
+        team1Players.add(name);
+      } else if (data['team'] == 2) {
+        team2Players.add(name);
+      }
+    });
+
+    final int slotsPerTeam = (provider.room!.maxPlayers / 2).ceil();
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // TEAM 1 (RED)
+        Expanded(
+          child: Column(
+            children: [
+              Text(
+                'Team Red'.tr(),
+                style: const TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: slotsPerTeam,
+                  itemBuilder: (context, index) {
+                    if (index < team1Players.length) {
+                      final playerName = team1Players[index];
+                      final isMe = playerName == provider.nickname;
+                      return _PlayerChip(
+                        name: playerName,
+                        label: isMe ? 'You'.tr() : 'Player'.tr(),
+                        isMe: isMe,
+                        isHost: playerName == provider.room!.hostNickname,
+                        teamColor: Colors.redAccent.withValues(alpha: 0.2),
+                      );
+                    } else {
+                      return _PlayerChip(
+                        name: 'Empty'.tr(),
+                        label: 'Waiting...'.tr(),
+                        isEmpty: true,
+                        teamColor: Colors.redAccent.withValues(alpha: 0.05),
+                      );
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(width: 8),
+        Container(width: 1, color: Colors.white24),
+        const SizedBox(width: 8),
+
+        // TEAM 2 (BLUE)
+        Expanded(
+          child: Column(
+            children: [
+              Text(
+                'Team Blue'.tr(),
+                style: const TextStyle(
+                  color: Colors.blueAccent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: slotsPerTeam,
+                  itemBuilder: (context, index) {
+                    if (index < team2Players.length) {
+                      final playerName = team2Players[index];
+                      final isMe = playerName == provider.nickname;
+                      return _PlayerChip(
+                        name: playerName,
+                        label: isMe ? 'You'.tr() : 'Player'.tr(),
+                        isMe: isMe,
+                        isHost: playerName == provider.room!.hostNickname,
+                        teamColor: Colors.blueAccent.withValues(alpha: 0.2),
+                      );
+                    } else {
+                      return _PlayerChip(
+                        name: 'Empty'.tr(),
+                        label: 'Waiting...'.tr(),
+                        isEmpty: true,
+                        teamColor: Colors.blueAccent.withValues(alpha: 0.05),
+                      );
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _PlayerChip extends StatelessWidget {
   final String name;
   final String label;
+  final bool isEmpty;
+  final bool isMe;
+  final bool isHost;
+  final Color? teamColor;
 
-  const _PlayerChip({required this.name, required this.label});
+  const _PlayerChip({
+    required this.name,
+    required this.label,
+    this.isEmpty = false,
+    this.isMe = false,
+    this.isHost = false,
+    this.teamColor,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Chip(
-        avatar: CircleAvatar(
-          backgroundColor: Colors.white24,
-          child: Text(name[0].toUpperCase()),
+        avatar: isEmpty
+            ? const CircleAvatar(
+                backgroundColor: Colors.white12,
+                child: Icon(
+                  Icons.person_outline,
+                  size: 16,
+                  color: Colors.white54,
+                ),
+              )
+            : CircleAvatar(
+                backgroundColor: isMe
+                    ? Theme.of(context).colorScheme.secondary
+                    : Colors.white24,
+                child: Text(
+                  name[0].toUpperCase(),
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+        label: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              isEmpty ? label : '$label: $name',
+              style: TextStyle(
+                color: isEmpty ? Colors.white54 : Colors.white,
+                fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+            if (isHost && !isEmpty) ...[
+              const SizedBox(width: 8),
+              const Icon(
+                Icons.workspace_premium,
+                color: Colors.amber,
+                size: 20,
+              ),
+            ],
+          ],
         ),
-        label: Text('$label: $name'),
         backgroundColor: Colors.transparent,
-        side: const BorderSide(color: Colors.white24),
+        side: BorderSide(color: isEmpty ? Colors.white10 : Colors.white24),
       ),
     );
   }

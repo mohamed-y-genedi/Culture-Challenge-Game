@@ -12,6 +12,7 @@ class MultiplayerLobbyScreen extends StatefulWidget {
 
 class _MultiplayerLobbyScreenState extends State<MultiplayerLobbyScreen> {
   final TextEditingController _roomCodeController = TextEditingController();
+  bool _isJoining = false;
 
   @override
   void dispose() {
@@ -27,6 +28,8 @@ class _MultiplayerLobbyScreenState extends State<MultiplayerLobbyScreen> {
   }
 
   void _joinRoom() async {
+    if (_isJoining) return;
+
     final game = Provider.of<GameProvider>(context, listen: false);
 
     if (_roomCodeController.text.isEmpty) {
@@ -36,25 +39,33 @@ class _MultiplayerLobbyScreenState extends State<MultiplayerLobbyScreen> {
       return;
     }
 
+    setState(() => _isJoining = true);
+
     game.setSinglePlayerMode(false);
 
-    final success = await game.joinRoom(_roomCodeController.text.toUpperCase());
-
-    if (game.errorMessage != null && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(game.errorMessage!)));
-      return;
-    }
-
-    if (success && mounted) {
-      Navigator.pushNamed(context, '/lobby');
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(game.errorMessage ?? 'Failed to join room'.tr()),
-        ),
+    try {
+      final success = await game.joinRoom(
+        _roomCodeController.text.toUpperCase(),
       );
+
+      if (game.errorMessage != null && mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(game.errorMessage!)));
+        return;
+      }
+
+      if (success && mounted) {
+        Navigator.pushNamed(context, '/lobby');
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(game.errorMessage ?? 'Failed to join room'.tr()),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isJoining = false);
     }
   }
 
@@ -113,6 +124,11 @@ class _MultiplayerLobbyScreenState extends State<MultiplayerLobbyScreen> {
                       label: 'ROOM_CODE_INPUT',
                       child: TextField(
                         controller: _roomCodeController,
+                        onChanged: (val) {
+                          if (val.trim().length == 5 && !game.isLoading) {
+                            _joinRoom();
+                          }
+                        },
                         textCapitalization: TextCapitalization.characters,
                         decoration: InputDecoration(
                           labelText: 'ROOM CODE'.tr(),

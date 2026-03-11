@@ -3,8 +3,17 @@ import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
 import '../utils/translations.dart';
 
-class CategorySelectionScreen extends StatelessWidget {
+class CategorySelectionScreen extends StatefulWidget {
   const CategorySelectionScreen({super.key});
+
+  @override
+  State<CategorySelectionScreen> createState() =>
+      _CategorySelectionScreenState();
+}
+
+class _CategorySelectionScreenState extends State<CategorySelectionScreen> {
+  int _maxPlayers = 2;
+  String _gameMode = 'ffa';
 
   final List<String> categories = const [
     'Islamic',
@@ -34,78 +43,166 @@ class CategorySelectionScreen extends StatelessWidget {
       ),
       body: Stack(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: GridView.builder(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                childAspectRatio: 1.1,
-              ),
-              itemCount: categories.length,
-              itemBuilder: (context, index) {
-                final category = categories[index];
+          Column(
+            children: [
+              if (!provider.isSinglePlayer) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 8.0,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Game Mode:'.tr(),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      SegmentedButton<String>(
+                        segments: [
+                          ButtonSegment<String>(
+                            value: 'ffa',
+                            label: Text('Individuals'.tr()),
+                          ),
+                          ButtonSegment<String>(
+                            value: 'teams',
+                            label: Text('Teams'.tr()),
+                          ),
+                        ],
+                        selected: <String>{_gameMode},
+                        onSelectionChanged: (Set<String> newSelection) {
+                          setState(() {
+                            _gameMode = newSelection.first;
+                            if (_gameMode == 'teams' && _maxPlayers < 4) {
+                              _maxPlayers = 4;
+                            }
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 8.0,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Max Players:'.tr(),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      SegmentedButton<int>(
+                        segments: const [
+                          ButtonSegment<int>(value: 2, label: Text('2')),
+                          ButtonSegment<int>(value: 3, label: Text('3')),
+                          ButtonSegment<int>(value: 4, label: Text('4')),
+                        ],
+                        selected: <int>{_maxPlayers},
+                        onSelectionChanged: _gameMode == 'teams'
+                            ? null
+                            : (Set<int> newSelection) {
+                                setState(() {
+                                  _maxPlayers = newSelection.first;
+                                });
+                              },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: GridView.builder(
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 16,
+                          mainAxisSpacing: 16,
+                          childAspectRatio: 1.1,
+                        ),
+                    itemCount: categories.length,
+                    itemBuilder: (context, index) {
+                      final category = categories[index];
 
-                // Send the exact English category name to Supabase
-                String apiCategory = category;
+                      // Send the exact English category name to Supabase
+                      String apiCategory = category;
 
-                return _CategoryCard(
-                  category: category,
-                  enabled: !provider.isLoading,
-                  onTap: () async {
-                    if (provider.isSinglePlayer) {
-                      final success = await provider.startSinglePlayerGame(
-                        apiCategory,
+                      return _CategoryCard(
+                        category: category,
+                        enabled: !provider.isLoading,
+                        onTap: () async {
+                          if (provider.isSinglePlayer) {
+                            final success = await provider
+                                .startSinglePlayerGame(apiCategory);
+
+                            if (provider.errorMessage != null &&
+                                context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(provider.errorMessage!)),
+                              );
+                              return;
+                            }
+
+                            if (success && context.mounted) {
+                              Navigator.pushNamed(context, '/game');
+                            } else if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    provider.errorMessage ??
+                                        'Failed to start game'.tr(),
+                                  ),
+                                ),
+                              );
+                            }
+                          } else {
+                            final success = await provider.createRoom(
+                              apiCategory,
+                              maxPlayers: _maxPlayers,
+                              gameMode: _gameMode,
+                            );
+
+                            // If provider set an error, show it
+                            if (provider.errorMessage != null &&
+                                context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(provider.errorMessage!)),
+                              );
+                              return;
+                            }
+
+                            if (success && context.mounted) {
+                              Navigator.pushNamed(context, '/lobby');
+                            } else if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    provider.errorMessage ??
+                                        'Failed to create room'.tr(),
+                                  ),
+                                ),
+                              );
+                            }
+                          }
+                        },
                       );
-
-                      if (provider.errorMessage != null && context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(provider.errorMessage!)),
-                        );
-                        return;
-                      }
-
-                      if (success && context.mounted) {
-                        Navigator.pushNamed(context, '/game');
-                      } else if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              provider.errorMessage ??
-                                  'Failed to start game'.tr(),
-                            ),
-                          ),
-                        );
-                      }
-                    } else {
-                      final success = await provider.createRoom(apiCategory);
-
-                      // If provider set an error, show it
-                      if (provider.errorMessage != null && context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(provider.errorMessage!)),
-                        );
-                        return;
-                      }
-
-                      if (success && context.mounted) {
-                        Navigator.pushNamed(context, '/lobby');
-                      } else if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              provider.errorMessage ??
-                                  'Failed to create room'.tr(),
-                            ),
-                          ),
-                        );
-                      }
-                    }
-                  },
-                );
-              },
-            ),
+                    },
+                  ),
+                ),
+              ),
+            ],
           ),
 
           // Global loading overlay while provider.isLoading is true

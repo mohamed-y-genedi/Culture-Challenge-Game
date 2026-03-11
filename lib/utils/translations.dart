@@ -71,6 +71,8 @@ class Translations {
       'Player 1': 'Player 1',
       'Player 2': 'Player 2',
       'Waiting for players to join...': 'Waiting for players to join...',
+      'Max Players:': 'Max Players:',
+      'Empty Slot': 'Empty Slot',
     },
     'ar': {
       'SINGLE PLAYER': 'لعبة فردية',
@@ -141,6 +143,8 @@ class Translations {
       'Player 1': 'اللاعب 1',
       'Player 2': 'اللاعب 2',
       'Waiting for players to join...': 'في انتظار انضمام اللاعبين...',
+      'Max Players:': 'عدد اللاعبين الأقصى:',
+      'Empty Slot': 'مكان فارغ',
     },
   };
 

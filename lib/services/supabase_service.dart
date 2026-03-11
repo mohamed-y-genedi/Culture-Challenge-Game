@@ -10,25 +10,34 @@ class SupabaseService {
 
   // Create a new room. Returns the generated room code on success, or null on failure.
   // Inserts into both 'rooms' and 'players' tables (relational schema).
-  Future<String?> createRoom(String nickname, String category) async {
+  Future<String?> createRoom(
+    String nickname,
+    String category, {
+    int maxPlayers = 2,
+    String gameMode = 'ffa',
+  }) async {
     const int maxRetries = 5;
 
     for (int attempt = 0; attempt < maxRetries; attempt++) {
       final roomCode = _generateRoomCode();
       try {
-        // Insert room into 'rooms' table
+        final hostPlayerMap = <String, dynamic>{
+          'score': 0,
+          'has_answered': false,
+        };
+
+        if (gameMode == 'teams') {
+          hostPlayerMap['team'] = 1;
+        }
+
+        // Insert room into 'rooms' table with new JSONB structure
         await _client.from('rooms').insert({
           'room_code': roomCode,
-          'player1_id': nickname,
           'host_nickname': nickname,
           'category': category,
-        });
-
-        // Insert host into 'players' table
-        await _client.from('players').insert({
-          'room_code': roomCode,
-          'nickname': nickname,
-          'score': 0,
+          'max_players': maxPlayers,
+          'game_mode': gameMode,
+          'players': {nickname: hostPlayerMap},
         });
 
         return roomCode;
@@ -71,14 +80,30 @@ class SupabaseService {
       }
 
       final room = Room.fromJson(Map<String, dynamic>.from(response));
-      if (room.player2 != null) {
+      // Check if room is full
+      if (room.players.length >= room.maxPlayers) {
         debugPrint('joinRoom: room full: $roomCode');
         return false;
       }
 
+      // Check if user is already in the room
+      if (room.players.containsKey(nickname)) {
+        return true;
+      }
+
+      final currentPlayers = Map<String, dynamic>.from(room.players);
+
+      final playerMap = <String, dynamic>{'score': 0, 'has_answered': false};
+
+      if (room.gameMode == 'teams') {
+        playerMap['team'] = (currentPlayers.length % 2 == 0) ? 1 : 2;
+      }
+
+      currentPlayers[nickname] = playerMap;
+
       await _client
           .from('rooms')
-          .update({'player2_id': nickname, 'status': 'playing'})
+          .update({'players': currentPlayers})
           .eq('room_code', roomCode);
 
       return true;
@@ -163,17 +188,48 @@ class SupabaseService {
     }
   }
 
-  // Update score. Returns true on success, false on failure.
-  Future<bool> updateScore(
+  // Save the shuffled questions to the room so all players use exactly the same set.
+  Future<bool> saveRoomQuestions(
     String roomCode,
-    int playerNumber,
-    int newScore,
+    List<Map<String, dynamic>> questions,
   ) async {
-    final column = playerNumber == 1 ? 'p1_score' : 'p2_score';
     try {
       await _client
           .from('rooms')
-          .update({column: newScore})
+          .update({'questions': questions})
+          .eq('room_code', roomCode);
+      return true;
+    } on PostgrestException catch (e) {
+      debugPrint('PostgrestException (saveRoomQuestions): ${e.message}');
+      return false;
+    } catch (e) {
+      debugPrint('Exception (saveRoomQuestions): $e');
+      return false;
+    }
+  }
+
+  // Update score and answer state
+  Future<bool> updateScore(
+    String roomCode,
+    String nickname,
+    int newScore,
+  ) async {
+    try {
+      final response = await _client
+          .from('rooms')
+          .select('players')
+          .eq('room_code', roomCode)
+          .single();
+      final players = Map<String, dynamic>.from(response['players'] ?? {});
+
+      if (players.containsKey(nickname)) {
+        players[nickname]['score'] = newScore;
+        players[nickname]['has_answered'] = true;
+      }
+
+      await _client
+          .from('rooms')
+          .update({'players': players})
           .eq('room_code', roomCode);
       return true;
     } on PostgrestException catch (e) {
@@ -188,10 +244,24 @@ class SupabaseService {
   // Next question. Returns true on success, false on failure.
   Future<bool> nextQuestion(String roomCode, int currentIndex) async {
     try {
+      final response = await _client
+          .from('rooms')
+          .select('players')
+          .eq('room_code', roomCode)
+          .single();
+      final players = Map<String, dynamic>.from(response['players'] ?? {});
+      for (var key in players.keys) {
+        players[key]['has_answered'] = false;
+      }
+
       await _client
           .from('rooms')
-          .update({'current_q_index': currentIndex + 1})
-          .eq('room_code', roomCode);
+          .update({'current_q_index': currentIndex + 1, 'players': players})
+          .eq('room_code', roomCode)
+          .eq(
+            'current_q_index',
+            currentIndex,
+          ); // Atomic lock: Only update if no one else has updated it yet
       return true;
     } on PostgrestException catch (e) {
       debugPrint('PostgrestException (nextQuestion): ${e.message}');
