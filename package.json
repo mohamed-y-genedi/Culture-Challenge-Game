@@ -1,0 +1,22 @@
+{
+  "name": "my_quiz_game",
+  "version": "1.0.0",
+  "description": "A new Flutter project.",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^25.3.5"
+  },
+  "dependencies": {
+    "@zerostep/playwright": "^0.1.5",
+    "dotenv": "^17.3.1"
+  }
+}
